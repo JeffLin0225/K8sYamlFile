@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana-alloy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana-alloy
+  template:
+    metadata:
+      labels:
+        app: grafana-alloy
+    spec:
+      volumes:
+        - name: logs-volume
+          hostPath:
+            path: /Users/linjiaxian/Desktop/logCollection  # 主机路径
+            type: DirectoryOrCreate
+        - name: alloy-config
+          configMap:
+            name: alloy-config
+      containers:
+        - name: grafana-alloy
+          image: grafana/alloy:latest
+          volumeMounts:
+            - name: logs-volume
+              mountPath: /logs  # 容器内路径
+            - name: alloy-config
+              mountPath: /etc/alloy
+              readOnly: true
+          args:
+            - run
+            - /etc/alloy/config.river  # 指向 River 格式的配置文件
+          ports:
+            - name: http-metrics
+              containerPort: 3200
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-alloy
+spec:
+  selector:
+    app: grafana-alloy
+  ports:
+    - name: http-metrics
+      port: 3200
+      targetPort: 3200
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+data:
+  config.river: |
+    // Collection: mount a local directory with a certain path spec
+    local.file_match "applogs" {
+        path_targets = [
+            {"__path__" = "/logs/blogLogCollection/*.log"},
+            {"__path__" = "/logs/UserLogCollection/*.log"},
+            {"__path__" = "/logs/GateWayLogCollection/*.log"},
+        ]
+    }
+
+    // Collection: Take the file match as input, and scrape those mounted log files
+    loki.source.file "local_files" {
+        targets    = local.file_match.applogs.targets
+        forward_to = [loki.process.add_new_label.receiver]
+    }
+
+    // Transformation: pull some data out of the log message, and turn it into a label
+    loki.process "add_new_label" {
+        stage.logfmt {
+            mapping = {
+                "extracted_level" = "level",
+            }
+        }
+
+        stage.labels {
+            values = {
+                "level" = "extracted_level",
+            }
+        }
+
+        stage.static_labels {
+            values = {
+                "service" = "app1",
+                "env"     = "development",
+            }
+        }
+
+        forward_to = [loki.write.local_loki.receiver]
+    }
+
+    // Anything that comes into this component gets written to the loki remote API
+    loki.write "local_loki" {
+        endpoint {
+            url = "http://loki:3100/loki/api/v1/push"
+        }
+    }
