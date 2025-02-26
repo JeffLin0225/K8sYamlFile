@@ -3,80 +3,89 @@ kind: Deployment
 metadata:
   name: loki
 spec:
-  replicas: 1  # 設置副本數為 1
+  replicas: 1
   selector:
     matchLabels:
-      app: loki  # 匹配標籤 app: loki
+      app: loki
   template:
     metadata:
       labels:
-        app: loki  # 設置標籤 app: loki
+        app: loki
     spec:
       containers:
-      - name: loki  # 容器名稱 loki
-        image: grafana/loki:latest  # 使用最新版本的 grafana/loki 映像
+      - name: loki
+        image: grafana/loki:latest
         ports:
-        - containerPort: 3100  # 容器內的端口 3100
+        - containerPort: 3100
         args:
-        - -config.file=/etc/loki/local-config.yaml  # 配置文件路徑
+        - -config.file=/etc/loki/config.yaml
         resources:
           requests:
-            cpu: "250m"  # 請求的 CPU 資源
-            memory: "512Mi"  # 請求的內存資源
+            cpu: "250m"
+            memory: "512Mi"
           limits:
-            cpu: "500m"  # 限制的 CPU 資源
-            memory: "1Gi"  # 限制的內存資源
+            cpu: "500m"
+            memory: "1Gi"
         volumeMounts:
+        - name: loki-storage
+          mountPath: /loki  # ✅ 存储目录
         - name: loki-config
-          mountPath: /etc/loki  # 挂載點
+          mountPath: /etc/loki
       volumes:
-        - name: loki-config
-          configMap:
-            name: loki-config  # 引用 ConfigMap
+      - name: loki-storage
+        emptyDir: {}  # ✅ 使用 Minikube 内存存储（重启后数据会丢失）
+      - name: loki-config
+        configMap:
+          name: loki-config
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: loki-config
 data:
-  local-config.yaml: |
-    auth_enabled: false  # 禁用身份驗證
+  config.yaml: |
+    auth_enabled: false
+
     server:
-      http_listen_port: 3100  # 設置服務監聽端口為 3100
+      http_listen_port: 3100
+
     ingester:
       lifecycler:
-        address: 127.0.0.1  # 指定 ingester 的地址
+        address: 127.0.0.1
         ring:
           kvstore:
-            store: inmemory  # 使用內存存儲
-          replication_factor: 1  # 複製因子設置為 1
-        final_sleep: 0s  # 無需等待直接停止
-      chunk_idle_period: 3m  # 數據塊空閒 3 分鐘後切割
-      chunk_retain_period: 1m  # 數據塊保留 1 分鐘後持久化
-      max_transfer_retries: 0  # 無需重傳
+            store: inmemory
+          replication_factor: 1
+        final_sleep: 0s
+      chunk_idle_period: 3m
+      chunk_retain_period: 1m
+
     schema_config:
       configs:
-      - from: 2025-02-26  # 設置配置的生效日期
-        store: boltdb  # 使用 BoltDB 存儲
-        object_store: filesystem  # 使用文件系統存儲
-        schema: v11  # 使用 schema 版本 v11
+      - from: 2025-02-26
+        store: tsdb  # ✅ tsdb 索引存储
+        object_store: filesystem  # ✅ 本地存储
+        schema: v13  # ✅ 升级到 v13
         index:
-          prefix: index_  # 索引前綴
-          period: 24h  # 每天生成新的索引文件
+          prefix: index_
+          period: 24h
+
     storage_config:
-      boltdb:
-        directory: /loki/index  # BoltDB 索引數據存儲目錄
+      tsdb_shipper:
+        active_index_directory: /loki/tsdb-index
+        cache_location: /loki/tsdb-cache
+        shared_store: filesystem  # ✅ 使用本地存储
       filesystem:
-        directory: /loki/chunks  # 日誌數據塊存儲目錄
+        directory: /loki/chunks  # ✅ 本地存储路径
+
     limits_config:
-      enforce_metric_name: false  # 不強制要求度量名稱
-      reject_old_samples: true  # 啟用拒絕老舊樣本
-      reject_old_samples_max_age: 168h  # 拒絕超過 168 小時（7 天）的樣本
-    chunk_store_config:
-      max_look_back_period: 0s  # 查詢不受限制
+      allow_structured_metadata: true  # ✅ 允许结构化元数据
+      reject_old_samples: true
+      reject_old_samples_max_age: 168h
+
     table_manager:
-      retention_deletes_enabled: true  # 啟用保留期間內的刪除
-      retention_period: 336h  # 數據保留 336 小時（14 天）
+      retention_deletes_enabled: true
+      retention_period: 336h
 ---
 apiVersion: v1
 kind: Service
@@ -84,7 +93,7 @@ metadata:
   name: loki
 spec:
   ports:
-  - port: 3100  # 服務的端口
-    targetPort: 3100  # 容器的目標端口
+  - port: 3100
+    targetPort: 3100
   selector:
-    app: loki  # 匹配標籤 app: loki
+    app: loki

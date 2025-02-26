@@ -2,8 +2,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: loki
-  labels:
-    app: loki
 spec:
   replicas: 1
   selector:
@@ -15,35 +13,94 @@ spec:
         app: loki
     spec:
       containers:
-        - name: loki
-          image: grafana/loki:latest
-          ports:
-            - containerPort: 3100
-          args:
-            - "-config.file=/etc/loki/local-config.yaml"
-          resources:
-            requests:
-              cpu: "250m"
-              memory: "512Mi"
-            limits:
-              cpu: "500m"
-              memory: "1Gi"
-          volumeMounts:
-            - name: config
-              mountPath: /etc/loki
+      - name: loki
+        image: grafana/loki:latest
+        ports:
+        - containerPort: 3100
+        args:
+        - -config.file=/etc/loki/config.yaml
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "500m"
+            memory: "1Gi"
+        volumeMounts:
+        - name: loki-storage
+          mountPath: /loki
+        - name: loki-config
+          mountPath: /etc/loki
       volumes:
-        - name: config
-          configMap:
-            name: loki-config
+      - name: loki-storage
+        emptyDir: {}  # ✅ Minikube 使用空目录存储
+      - name: loki-config
+        configMap:
+          name: loki-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-config
+data:
+  config.yaml: |
+    auth_enabled: false
+
+    common:
+      path_prefix: /loki  # ✅ Loki 数据存储路径
+
+    server:
+      http_listen_port: 3100
+
+    ingester:
+      lifecycler:
+        address: 127.0.0.1
+        ring:
+          kvstore:
+            store: inmemory
+          replication_factor: 1
+        final_sleep: 0s
+      chunk_idle_period: 3m
+      chunk_retain_period: 1m
+
+    schema_config:
+      configs:
+      - from: 2025-02-26
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+
+    storage_config:
+      tsdb_shipper:
+        active_index_directory: /loki/tsdb-index
+        cache_location: /loki/tsdb-cache
+      filesystem:
+        directory: /loki/chunks  # ✅ 正确的文件存储路径
+
+    compactor:
+      working_directory: /loki/compactor  # ✅ 修正 compactor 目录
+      delete-request-store: /loki/compactor-deletes  # ✅ 新增删除请求存储路径
+      retention_enabled: true  # ✅ 启用日志保留
+
+    limits_config:
+      allow_structured_metadata: true
+      reject_old_samples: true
+      reject_old_samples_max_age: 168h
+
+    table_manager:
+      retention_deletes_enabled: true
+      retention_period: 336h
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: loki
 spec:
+  ports:
+  - port: 3100
+    targetPort: 3100
   selector:
     app: loki
-  ports:
-    - protocol: TCP
-      port: 3100
-      targetPort: 3100
