@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loki
+spec:
+  replicas: 1  # 設置副本數為 1
+  selector:
+    matchLabels:
+      app: loki  # 匹配標籤 app: loki
+  template:
+    metadata:
+      labels:
+        app: loki  # 設置標籤 app: loki
+    spec:
+      containers:
+      - name: loki  # 容器名稱 loki
+        image: grafana/loki:latest  # 使用最新版本的 grafana/loki 映像
+        ports:
+        - containerPort: 3100  # 容器內的端口 3100
+        args:
+        - -config.file=/etc/loki/local-config.yaml  # 配置文件路徑
+        resources:
+          requests:
+            cpu: "250m"  # 請求的 CPU 資源
+            memory: "512Mi"  # 請求的內存資源
+          limits:
+            cpu: "500m"  # 限制的 CPU 資源
+            memory: "1Gi"  # 限制的內存資源
+        volumeMounts:
+        - name: loki-config
+          mountPath: /etc/loki  # 挂載點
+      volumes:
+        - name: loki-config
+          configMap:
+            name: loki-config  # 引用 ConfigMap
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-config
+data:
+  local-config.yaml: |
+    auth_enabled: false  # 禁用身份驗證
+    server:
+      http_listen_port: 3100  # 設置服務監聽端口為 3100
+    ingester:
+      lifecycler:
+        address: 127.0.0.1  # 指定 ingester 的地址
+        ring:
+          kvstore:
+            store: inmemory  # 使用內存存儲
+          replication_factor: 1  # 複製因子設置為 1
+        final_sleep: 0s  # 無需等待直接停止
+      chunk_idle_period: 3m  # 數據塊空閒 3 分鐘後切割
+      chunk_retain_period: 1m  # 數據塊保留 1 分鐘後持久化
+      max_transfer_retries: 0  # 無需重傳
+    schema_config:
+      configs:
+      - from: 2025-02-26  # 設置配置的生效日期
+        store: boltdb  # 使用 BoltDB 存儲
+        object_store: filesystem  # 使用文件系統存儲
+        schema: v11  # 使用 schema 版本 v11
+        index:
+          prefix: index_  # 索引前綴
+          period: 24h  # 每天生成新的索引文件
+    storage_config:
+      boltdb:
+        directory: /loki/index  # BoltDB 索引數據存儲目錄
+      filesystem:
+        directory: /loki/chunks  # 日誌數據塊存儲目錄
+    limits_config:
+      enforce_metric_name: false  # 不強制要求度量名稱
+      reject_old_samples: true  # 啟用拒絕老舊樣本
+      reject_old_samples_max_age: 168h  # 拒絕超過 168 小時（7 天）的樣本
+    chunk_store_config:
+      max_look_back_period: 0s  # 查詢不受限制
+    table_manager:
+      retention_deletes_enabled: true  # 啟用保留期間內的刪除
+      retention_period: 336h  # 數據保留 336 小時（14 天）
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki
+spec:
+  ports:
+  - port: 3100  # 服務的端口
+    targetPort: 3100  # 容器的目標端口
+  selector:
+    app: loki  # 匹配標籤 app: loki
